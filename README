@@ -1,5 +1,5 @@
 ====================================================================
-MOD_AUTH_CAS 1.0.4 README
+MOD_AUTH_CAS 1.0.7 README
 ====================================================================
 Apache CAS Authentication Module
 
@@ -32,13 +32,14 @@ http://www.ja-sig.org/products/cas/overview/protocol/index.html
 ====================================================================
 NEW FEATURES AND FUNCTIONS IN THIS RELEASE 
 ====================================================================
--CASAuthNHeader based on a feature request by Matt Smith
+* Improved Apache version detection based on the contents of
+  ap_release.h
+* Cookies are now stored in an XML format, making the data
+  stored more easily extensible.
 
 ====================================================================
 BUG FIXES 
 ====================================================================
--Fixed segfault bug reported by Nicolas Clemeur
--Fixed MAS-8 reported by Dale Ogilvie
 
 ====================================================================
 KNOWN LIMITATIONS
@@ -82,15 +83,6 @@ or
 apxs2 -i -c mod_auth_cas.c
 
 depending on your Linux distribution.
-
-
-If you want to install this for an Apache 2.0 server, please edit
-mod_auth_cas.h and modify the line that says:
-#undef APACHE2_0
-
-to
-
-#define APACHE2_0
 
 CONFIGURING THE SOFTWARE
 --------------------------------------------------------------------
@@ -149,29 +141,35 @@ Description:	The path to the X509 certificate of the Certificate Authority for
 		by their hashed names.
 
 Directive: 	CASLoginURL
-Default:	https://login.uconn.edu/cas/login
+Default:	https://login.example.com/cas/login
 Description:	The URL to redirect users to when they attempt to access a CAS
 		protected resource and do not have an existing session.  The
 		'service', 'renew', and 'gateway' parameters will be appended to
 		this by mod_auth_cas if necessary.
 
 Directive: 	CASValidateURL
-Default:	https://login.uconn.edu/cas/serviceValidate
+Default:	https://login.example.com/cas/serviceValidate
 Description:	The URL to use when validating a ticket presented by a client in
 		the HTTP query string (ticket=...).
 
 Directive: 	CASProxyValidateURL
-Default:	https://login.uconn.edu/cas/proxyValidate
+Default:	https://login.example.com/cas/proxyValidate
 Description:	The URL to use when performing a proxy validation.  This is currently
 		an unimplemented feature, so setting this will have no effect.
 
 Directive: 	CASCookiePath
-Default:	/tmp/cas/
+Default:	/dev/null
 Description:	When users first authenticate to mod_auth_cas with a valid service ticket,
 		a local session is established.  Information about this session (the
 		username, time of creation, last activity time, the resource initially
 		requested, and whether or not the credentials were renewed) is stored
-		in this file.  This location should be writable by the web server.
+		in this directory.  This location should be writable by the web server ONLY.
+		Any user that can write to this location can falsify authentication information
+		by creating a fake data file.
+		NOTE : Some distributions purge the contents of /tmp/ on a reboot, including
+		user created directories.  This will prevent mod_auth_cas from storing
+		cookie information until that directory is created.  To avoid this, try
+		using a different location, such as /var/cache/apache2/mod_auth_cas/
 
 Directive: 	CASCookieEntropy
 Default:	32
