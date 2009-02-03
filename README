@@ -1,5 +1,5 @@
 ====================================================================
-MOD_AUTH_CAS 1.0.7 README
+MOD_AUTH_CAS 1.0.8 README
 ====================================================================
 Apache CAS Authentication Module
 
@@ -20,6 +20,23 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 ====================================================================
+LICENSE EXCEPTION
+====================================================================
+In addition, as a special exception, the copyright holders give
+permission to link the code of portions of this program with the
+OpenSSL library under certain conditions as described in each
+individual source file, and distribute linked combinations
+including the two.
+
+You must obey the GNU General Public License in all respects
+for all of the code used other than OpenSSL.  If you modify
+file(s) with this exception, you may extend this exception to your
+version of the file(s), but you are not obligated to do so.  If you
+do not wish to do so, delete this exception statement from your
+version.  If you delete this exception statement from all source
+files in the program, then also delete it here.
+
+====================================================================
 INTRODUCTION 
 ====================================================================
 The purpose of this module is to allow an Apache web server to interact
@@ -32,14 +49,20 @@ http://www.ja-sig.org/products/cas/overview/protocol/index.html
 ====================================================================
 NEW FEATURES AND FUNCTIONS IN THIS RELEASE 
 ====================================================================
-* Improved Apache version detection based on the contents of
-  ap_release.h
-* Cookies are now stored in an XML format, making the data
-  stored more easily extensible.
+* Users are sent through one extra redirect after arriving at the
+  web server with their CAS ticket.  This is to send them back to
+  the URL they requested without a 'ticket' parameter that may
+  unexpectedly alter relative links that are constructed by
+  browsers.
 
 ====================================================================
 BUG FIXES 
 ====================================================================
+* Ignore case when comparing SSL certificates CN against the domain
+  name.
+* Ticket validation request converted to HTTP/1.0 in order to
+  resolve MAS-14, which caused mod_auth_cas to fail when receiving
+  a response that had chunked transfer encoding.
 
 ====================================================================
 KNOWN LIMITATIONS
@@ -51,6 +74,24 @@ These limitations are known to exists in this release of the software:
 * CAS Ticket Validation can only be performed over an SSL connection.
   The CAS protocol does not explicitly require this, but to not do so
   leaves this system open to a man-in-the-middle attack.
+
+* CAS single sign out is currently not functional and disabled.  It
+  is only safe to use in the case where all requests are GET and not
+  POST (the module inadvertently 'eats' some content of the POST
+  request while determining if it should process it as a SAML logout
+  request).
+
+* Reports of slow performance on some systems (particularly
+  virtual machines) have been reported.  This is related to the
+  entropy that is gathered when creating a session cookie for
+  the end user.  To combat this, there are 3 solutions.  The
+  first is to upgrade the version of the Apache Portable Runtime
+  on your system to >= 1.3.0.  In that version, entropy is gathered
+  from a nonblocking source.  The second method would be to install
+  a package such as rng-tools and feed random data from /dev/urandom
+  to /dev/random("-r /dev/urandom").  The  last way is to reduce
+  the size of the CASCookieEntropy setting, reducing the demand on
+  the pool.
 
 ====================================================================
 GETTING STARTED
@@ -64,6 +105,9 @@ OpenSSL - 0.9.8c
 Apache Portable Runtime - 1.2.8
 Apache Portable Runtime Utilities - 1.2.7
 Apache Web Server - 2.2.3
+
+Additionally, GNU Make and the auto* tools are necessary for building
+mod_auth_cas.
 
 Compatibility with other versions will depend on those other libraries.
 
@@ -83,6 +127,16 @@ or
 apxs2 -i -c mod_auth_cas.c
 
 depending on your Linux distribution.
+
+This release of mod_auth_cas includes support for autoconf.  Note that
+you must use GNU Make - other Make implementations may work, but are
+untested and not recommended.  Use the standard commands below to
+compile and install:
+
+./configure; make; make install
+
+configure can take an optional --with-apxs=/path/to/apxs argument to
+specify the path to your APXS binary.
 
 CONFIGURING THE SOFTWARE
 --------------------------------------------------------------------
@@ -141,19 +195,20 @@ Description:	The path to the X509 certificate of the Certificate Authority for
 		by their hashed names.
 
 Directive: 	CASLoginURL
-Default:	https://login.example.com/cas/login
+Default:	NULL
 Description:	The URL to redirect users to when they attempt to access a CAS
 		protected resource and do not have an existing session.  The
 		'service', 'renew', and 'gateway' parameters will be appended to
-		this by mod_auth_cas if necessary.
+		this by mod_auth_cas if necessary.  Include 'http[s]://...'
 
 Directive: 	CASValidateURL
-Default:	https://login.example.com/cas/serviceValidate
+Default:	NULL
 Description:	The URL to use when validating a ticket presented by a client in
-		the HTTP query string (ticket=...).
+		the HTTP query string (ticket=...).  Must include 'https://' and
+		must be an HTTPS URL.
 
 Directive: 	CASProxyValidateURL
-Default:	https://login.example.com/cas/proxyValidate
+Default:	NULL
 Description:	The URL to use when performing a proxy validation.  This is currently
 		an unimplemented feature, so setting this will have no effect.
 
@@ -202,6 +257,18 @@ Description:	This is the minimum amount of time that must pass inbetween cache
 		last cleaning, then all files in CASCookiePath are examined and if
 		they have expired, they are removed.  This is merely to prevent the
 		file system from becoming excessively cluttered.
+
+Directive:	CASCookieDomain
+Default:	NULL
+Description:	Specify the value for the 'Domain=' parameter in the Set-Cookie header.
+
+Directive:	CASCookieHttpOnly
+Default:	Off
+Description:	Set the optional 'HttpOnly' flag for cookies issues by mod_auth_cas.
+		This parameter may break RFC compliance since HttpOnly is not defined
+		in RFC 2109.  See http://msdn2.microsoft.com/en-us/library/ms533046.aspx
+		for more information.  Please note this feature is not honored by all
+		browsers.
 
 Valid Directory/.htaccess Directives
 ------------------------------------
@@ -260,10 +327,10 @@ Description:	If enabled, this will store the user returned by CAS in an HTTP hea
 CONTRIBUTORS 
 ====================================================================  
 Author:
-Phil Ames 	<phillip [dot] ames [at] uconn [dot] edu>
+Phil Ames 	<modauthcas [at] gmail [dot] com>
 
 Designers:
-Phil Ames 	<phillip [dot] ames [at] uconn [dot] edu>
+Phil Ames 	<modauthcas [at] gmail [dot] com>
 Matt Smith 	<matt [dot] smith [at] uconn [dot] edu>
 
 Portions of this module are based on code from a CAS module by Yale.
