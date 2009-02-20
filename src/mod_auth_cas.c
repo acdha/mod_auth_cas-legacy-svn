@@ -16,7 +16,7 @@
  *
  * mod_auth_cas.c
  * Apache CAS Authentication Module
- * Version 1.0.9
+ * Version 1.0.8
  *
  * Author:
  * Phil Ames       <modauthcas [at] gmail [dot] com>
@@ -416,13 +416,14 @@ static char *getCASScope(request_rec *r)
 
 static char *getCASGateway(request_rec *r)
 {
+	cas_dir_cfg *d;
 	char *rv = "";
 	cas_cfg *c = ap_get_module_config(r->server->module_config, &auth_cas_module);
 
 	if(c->CASDebug)
 		ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "entering getCASGateway()");
 
-	cas_dir_cfg *d = ap_get_module_config(r->per_dir_config, &auth_cas_module);
+	d = ap_get_module_config(r->per_dir_config, &auth_cas_module);
 	if(d->CASGateway != NULL && strncmp(d->CASGateway, r->parsed_uri.path, strlen(d->CASGateway)) == 0 && c->CASVersion > 1) { /* gateway not supported in CAS v1 */
 		rv = "&gateway=true";
 	}
@@ -742,7 +743,7 @@ static apr_byte_t readCASCacheFile(request_rec *r, cas_cfg *c, char *name, cas_c
 	apr_status_t rv;
 	char errbuf[CAS_MAX_ERROR_SIZE];
 	char *path, *val;
-	int i;
+	int i, rc;
 
 	if(c->CASDebug)
 		ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "entering readCASCacheFile()");
@@ -985,29 +986,44 @@ static apr_byte_t writeCASCacheEntry(request_rec *r, char *name, cas_cache_entry
 			ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "MOD_AUTH_CAS: could not obtain an exclusive lock on %s", path);
 			apr_file_close(f);
 			return FALSE;
-		} else
+		} else {
 			lock = TRUE;
+		}
 		apr_file_seek(f, APR_SET, &begin);
 		apr_file_trunc(f, begin);
 	}
 
+	apr_file_flush(f);
+
 	/* this is ultra-ghetto, but the APR really doesn't provide any facilities for easy DOM-style XML creation. */
+	if (c->CASDebug) {
+		ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "Writing CAS cacheEntry XML");
+	}
+
 	apr_file_printf(f, "<cacheEntry xmlns=\"http://uconn.edu/cas/mod_auth_cas\">\n");
 	apr_file_printf(f, "<user>%s</user>\n", apr_xml_quote_string(r->pool, cache->user, TRUE));
 	apr_file_printf(f, "<issued>%" APR_TIME_T_FMT "</issued>\n", cache->issued);
 	apr_file_printf(f, "<lastactive>%" APR_TIME_T_FMT "</lastactive>\n", cache->lastactive);
 	apr_file_printf(f, "<path>%s</path>\n", apr_xml_quote_string(r->pool, cache->path, TRUE));
 	apr_file_printf(f, "<ticket>%s</ticket>\n", apr_xml_quote_string(r->pool, cache->ticket, TRUE));
-	if(cache->renewed != FALSE)
-		apr_file_printf(f, "<renewed />\n");
-	if(cache->secure != FALSE)
-		apr_file_printf(f, "<secure />\n");
+	if(cache->renewed != FALSE) apr_file_printf(f, "<renewed />\n");
+	if(cache->secure != FALSE) apr_file_printf(f, "<secure />\n");
 	apr_file_printf(f, "</cacheEntry>\n");
 
-	if(lock != FALSE)
-		apr_file_unlock(f);
+	if (c->CASDebug) {
+		ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "Done writing CAS cacheEntry XML");
+	}
+
+	apr_file_flush(f);
+
+
+	if(lock != FALSE) apr_file_unlock(f);
 
 	apr_file_close(f);
+
+	if (c->CASDebug) {
+		ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "exiting writeCASCacheEntry()");
+	}
 
 	return TRUE;
 }
@@ -1407,6 +1423,9 @@ static char *getResponseFromServer (request_rec *r, cas_cfg *c, char *ticket)
 	apr_finfo_t f;
 	int i, bytesIn;
 	socket_t s = INVALID_SOCKET;
+#ifdef WIN32
+	WSADATA wsaData;
+#endif
 
 	SSL_METHOD *m;
 	SSL_CTX *ctx = NULL;
@@ -1417,7 +1436,6 @@ static char *getResponseFromServer (request_rec *r, cas_cfg *c, char *ticket)
 	if(c->CASDebug)
 		ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "entering getResponseFromServer()");
 #ifdef WIN32
-	WSADATA wsaData;
 	if (WSAStartup(MAKEWORD(2,0), &wsaData) != 0){
 		ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "MOD_AUTH_CAS: cannot initialize winsock2: (%d)", WSAGetLastError());
 		return NULL;
