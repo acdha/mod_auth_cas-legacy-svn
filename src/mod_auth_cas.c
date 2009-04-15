@@ -1364,7 +1364,7 @@ static apr_byte_t isValidCASCookie(request_rec *r, cas_cfg *c, char *cookie, cha
 
 /* SSL specific functions - these should be replaced by the APR-1.3 SSL functions when they are available */
 /* Credit to Shawn Bayern for the basis of most of this SSL related code */
-static apr_byte_t check_cert_cn(request_rec *r, cas_cfg *c, SSL_CTX *ctx, X509 *certificate, char *cn)
+static apr_byte_t check_cert_cn(request_rec *r, cas_cfg *c, X509 *certificate, char *cn)
 {
 	char buf[512];
 	char *domain = cn;
