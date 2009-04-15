@@ -16,7 +16,7 @@
  *
  * mod_auth_cas.c
  * Apache CAS Authentication Module
- * Version 1.0.8
+ * Version 1.0.9
  *
  * Author:
  * Phil Ames       <modauthcas [at] gmail [dot] com>
@@ -743,7 +743,8 @@ static apr_byte_t readCASCacheFile(request_rec *r, cas_cfg *c, char *name, cas_c
 	apr_status_t rv;
 	char errbuf[CAS_MAX_ERROR_SIZE];
 	char *path, *val;
-	int i, rc;
+	int i;
+	int rc;
 
 	if(c->CASDebug)
 		ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "entering readCASCacheFile()");
@@ -1006,8 +1007,10 @@ static apr_byte_t writeCASCacheEntry(request_rec *r, char *name, cas_cache_entry
 	apr_file_printf(f, "<lastactive>%" APR_TIME_T_FMT "</lastactive>\n", cache->lastactive);
 	apr_file_printf(f, "<path>%s</path>\n", apr_xml_quote_string(r->pool, cache->path, TRUE));
 	apr_file_printf(f, "<ticket>%s</ticket>\n", apr_xml_quote_string(r->pool, cache->ticket, TRUE));
-	if(cache->renewed != FALSE) apr_file_printf(f, "<renewed />\n");
-	if(cache->secure != FALSE) apr_file_printf(f, "<secure />\n");
+	if(cache->renewed != FALSE)
+		apr_file_printf(f, "<renewed />\n");
+	if(cache->secure != FALSE)
+		apr_file_printf(f, "<secure />\n");
 	apr_file_printf(f, "</cacheEntry>\n");
 
 	if (c->CASDebug) {
@@ -1017,7 +1020,8 @@ static apr_byte_t writeCASCacheEntry(request_rec *r, char *name, cas_cache_entry
 	apr_file_flush(f);
 
 
-	if(lock != FALSE) apr_file_unlock(f);
+	if(lock != FALSE)
+		apr_file_unlock(f);
 
 	apr_file_close(f);
 
@@ -1368,28 +1372,33 @@ static apr_byte_t check_cert_cn(request_rec *r, cas_cfg *c, SSL_CTX *ctx, X509 *
 
 	if(c->CASDebug)
 		ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "entering check_cert_cn()");
+
 	/* specify that 'certificate' (what was presented by the other side) is what we want to verify against 'store' */
 	X509_STORE_CTX_init(xctx, store, certificate, sk_X509_new_null());
 
-	/* this may be redundant, since we require peer verification to perform the handshake */
-	if(X509_verify_cert(xctx) == 0)
-		return FALSE;
-
 	X509_NAME_get_text_by_NID(X509_get_subject_name(certificate), NID_commonName, buf, sizeof(buf) - 1);
 	/* don't match because of truncation - this will require a hostname > 512 characters, though */
-	if(strlen(cn) >= sizeof(buf) - 1)
+	if(strlen(cn) >= sizeof(buf) - 1) {
+		ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "check_cert_cn() aborting - cn is too long");
 		return FALSE;
+	}
 
 	/* patch submitted by Earl Fogel for MAS-5 */
 	if(buf[0] == '*' && c->CASAllowWildcardCert != FALSE) {
+		ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "check_cert_cn() - testing wildcard certificate");
 		do {
 			domain = strchr(domain + (domain[0] == '.' ? 1 : 0), '.');
-			if(domain != NULL && apr_strnatcasecmp(buf+1, domain) == 0)
+			if(domain != NULL && apr_strnatcasecmp(buf+1, domain) == 0) {
+				ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "check_cert_cn() - successful wildcard certificate match");
 				return TRUE;
+			}
 		} while (domain != NULL);
 	} else {
-		if(apr_strnatcasecmp(buf, cn) == 0)
+		if(apr_strnatcasecmp(buf, cn) == 0) {
 			return TRUE;
+		} else {
+			ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "check_cert_cn() failed: cn '%s' != '%s'", cn, buf);
+		}
 	}
 	
 	return FALSE;
@@ -1531,7 +1540,7 @@ static char *getResponseFromServer (request_rec *r, cas_cfg *c, char *ticket)
 			CASCleanupSocket(s, ssl, ctx);
 			return (NULL);
 		} else if(check_cert_cn(r, c, ctx, SSL_get_peer_certificate(ssl), c->CASValidateURL.hostname) == FALSE) {
-			ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "MOD_AUTH_CAS: Certificate CN does not match %s", c->CASValidateURL.hostname);
+			ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "MOD_AUTH_CAS: Certificate check failed for %s", c->CASValidateURL.hostname);
 			CASCleanupSocket(s, ssl, ctx);
 			return (NULL);
 		}
