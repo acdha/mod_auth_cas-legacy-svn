@@ -16,7 +16,7 @@
  *
  * mod_auth_cas.c
  * Apache CAS Authentication Module
- * Version 1.0.9
+ * Version 1.0.8
  *
  * Author:
  * Phil Ames       <modauthcas [at] gmail [dot] com>
@@ -424,6 +424,7 @@ static char *getCASGateway(request_rec *r)
 		ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "entering getCASGateway()");
 
 	d = ap_get_module_config(r->per_dir_config, &auth_cas_module);
+
 	if(d->CASGateway != NULL && strncmp(d->CASGateway, r->parsed_uri.path, strlen(d->CASGateway)) == 0 && c->CASVersion > 1) { /* gateway not supported in CAS v1 */
 		rv = "&gateway=true";
 	}
@@ -1367,14 +1368,15 @@ static apr_byte_t check_cert_cn(request_rec *r, cas_cfg *c, SSL_CTX *ctx, X509 *
 {
 	char buf[512];
 	char *domain = cn;
-	X509_STORE *store = SSL_CTX_get_cert_store(ctx);
-	X509_STORE_CTX *xctx = X509_STORE_CTX_new();
 
 	if(c->CASDebug)
 		ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "entering check_cert_cn()");
 
-	/* specify that 'certificate' (what was presented by the other side) is what we want to verify against 'store' */
-	X509_STORE_CTX_init(xctx, store, certificate, sk_X509_new_null());
+	/* 
+	 * call to X509_verify_cert(xctx) removed - SSL_VERIFY_PEER verifies the certificate
+	 * and the X509_STORE here lacks any intermediate certificates.  Failure to validate
+	 * intermediate certificates reported by Chris Adams of Yale.
+	*/
 
 	X509_NAME_get_text_by_NID(X509_get_subject_name(certificate), NID_commonName, buf, sizeof(buf) - 1);
 	/* don't match because of truncation - this will require a hostname > 512 characters, though */
