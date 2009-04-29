@@ -1541,7 +1541,7 @@ static char *getResponseFromServer (request_rec *r, cas_cfg *c, char *ticket)
 			ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "MOD_AUTH_CAS: Certificate not presented or not signed by CA (from %s)", c->CASValidateURL.hostname);
 			CASCleanupSocket(s, ssl, ctx);
 			return (NULL);
-		} else if(check_cert_cn(r, c, ctx, SSL_get_peer_certificate(ssl), c->CASValidateURL.hostname) == FALSE) {
+		} else if(check_cert_cn(r, c, SSL_get_peer_certificate(ssl), c->CASValidateURL.hostname) == FALSE) {
 			ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "MOD_AUTH_CAS: Certificate check failed for %s", c->CASValidateURL.hostname);
 			CASCleanupSocket(s, ssl, ctx);
 			return (NULL);
