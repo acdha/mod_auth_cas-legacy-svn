@@ -23,6 +23,8 @@
  * Designers:
  * Phil Ames       <modauthcas [at] gmail [dot] com>
  * Matt Smith      <matt [dot] smith [at] uconn [dot] edu>
+ *
+ * Additonal patches to support arbitrary user attributes http://github.com/ozten/mod_auth_cas
  */
 
 #ifdef HAVE_CONFIG_H
@@ -740,7 +742,7 @@ static apr_byte_t readCASCacheFile(request_rec *r, cas_cfg *c, char *name, cas_c
 	apr_finfo_t fi;
 	apr_xml_parser *parser;
 	apr_xml_doc *doc;
-	apr_xml_elem *e;
+	apr_xml_elem *e, *attrs_e;
 	apr_status_t rv;
 	char errbuf[CAS_MAX_ERROR_SIZE];
 	char *path, *val;
@@ -813,12 +815,15 @@ static apr_byte_t readCASCacheFile(request_rec *r, cas_cfg *c, char *name, cas_c
 	/* XML structure: 
  	 * cacheEntry
 	 *	attr
+	 *	attrs
+	 *	    attr
 	 *	attr
 	 *	...
  	 */
 
 	/* initialize things to sane values */
-	cache->user = NULL;
+	cache->user = NULL;        
+	cache->attributes = apr_table_make(r->pool, ATTRS_INIT_SZ);
 	cache->issued = 0;
 	cache->lastactive = 0;
 	cache->path = "";
@@ -838,7 +843,16 @@ static apr_byte_t readCASCacheFile(request_rec *r, cas_cfg *c, char *name, cas_c
 
 		if (apr_strnatcasecmp(e->name, "user") == 0)
 			cache->user = apr_pstrndup(r->pool, val, strlen(val));
-		else if (apr_strnatcasecmp(e->name, "issued") == 0) {
+                
+		else if (apr_strnatcasecmp(e->name, "attributes") == 0) {
+			attrs_e = e->first_child;
+			while (attrs_e != NULL) {
+				if(attrs_e->first_cdata.first != NULL) {
+					apr_table_set(cache->attributes, attrs_e->name, attrs_e->first_cdata.first->text);
+				}
+				attrs_e = attrs_e->next;
+			}
+		} else if (apr_strnatcasecmp(e->name, "issued") == 0) {
 			if(sscanf(val, "%" APR_TIME_T_FMT, &(cache->issued)) != 1)
 				return FALSE;
 		} else if (apr_strnatcasecmp(e->name, "lastactive") == 0) {
@@ -958,6 +972,23 @@ static void CASCleanCache(request_rec *r, cas_cfg *c)
 
 }
 
+/* captures enough state for printing user attributes into the cache entry */
+struct cache_entry_state {
+	int debug;
+	request_rec *r;
+	apr_file_t *f;
+};
+
+/* apr_table_do callback, prints <key>value</key> into cache_entry fle */
+static int printAttributes(void *data, const char *key, const char *value)
+{
+        struct cache_entry_state *state = (struct cache_entry_state *) data;
+	if(state->debug)
+		ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, state->r, "Writing attribute %s=%s to cache entry", key, value);
+	apr_file_printf(state->f, "\t<%s>%s</%s>\n", key, apr_xml_quote_string(state->r->pool, value, TRUE), key);
+	return TRUE;
+}
+
 static apr_byte_t writeCASCacheEntry(request_rec *r, char *name, cas_cache_entry *cache, apr_byte_t exists)
 {
 	char *path;
@@ -966,6 +997,7 @@ static apr_byte_t writeCASCacheEntry(request_rec *r, char *name, cas_cache_entry
 	int i;
 	apr_byte_t lock = FALSE;
 	cas_cfg *c = ap_get_module_config(r->server->module_config, &auth_cas_module);
+        struct cache_entry_state state;
 
 	if(c->CASDebug)
 		ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "entering writeCASCacheEntry()");
@@ -1001,9 +1033,14 @@ static apr_byte_t writeCASCacheEntry(request_rec *r, char *name, cas_cache_entry
 	if (c->CASDebug) {
 		ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "Writing CAS cacheEntry XML");
 	}
-
+        state.debug = c->CASDebug;
+        state.r = r;
+        state.f = f;
 	apr_file_printf(f, "<cacheEntry xmlns=\"http://uconn.edu/cas/mod_auth_cas\">\n");
 	apr_file_printf(f, "<user>%s</user>\n", apr_xml_quote_string(r->pool, cache->user, TRUE));
+	apr_file_printf(f, "<attributes>\n");
+        apr_table_do(printAttributes, &state, cache->attributes, NULL);
+	apr_file_printf(f, "</attributes>\n");
 	apr_file_printf(f, "<issued>%" APR_TIME_T_FMT "</issued>\n", cache->issued);
 	apr_file_printf(f, "<lastactive>%" APR_TIME_T_FMT "</lastactive>\n", cache->lastactive);
 	apr_file_printf(f, "<path>%s</path>\n", apr_xml_quote_string(r->pool, cache->path, TRUE));
@@ -1033,7 +1070,7 @@ static apr_byte_t writeCASCacheEntry(request_rec *r, char *name, cas_cache_entry
 	return TRUE;
 }
 
-static char *createCASCookie(request_rec *r, char *user, char *ticket)
+static char *createCASCookie(request_rec *r, char *user, apr_table_t *attrs, char *ticket)
 {
 	char *path, *buf, *rv;
 	apr_file_t *f;
@@ -1050,6 +1087,7 @@ static char *createCASCookie(request_rec *r, char *user, char *ticket)
 	CASCleanCache(r, c);
 
 	e.user = user;
+        e.attributes = apr_table_copy(r->pool, attrs);
 	e.issued = apr_time_now();
 	e.lastactive = apr_time_now();
 	e.path = getCASPath(r);
@@ -1204,11 +1242,11 @@ static void deleteCASCacheFile(request_rec *r, char *cookieName)
 }
 
 /* functions related to validation of tickets/cache entries */
-static apr_byte_t isValidCASTicket(request_rec *r, cas_cfg *c, char *ticket, char **user)
+static apr_byte_t isValidCASTicket(request_rec *r, cas_cfg *c, char *ticket, char **user, apr_table_t *attrs)
 {
 	char *line;
 	apr_xml_doc *doc;
-	apr_xml_elem *node;
+	apr_xml_elem *node, *user_node = NULL, *attrs_node = NULL;
 	apr_xml_attr *attr;
 	apr_xml_parser *parser = apr_xml_parser_create(r->pool);
 	const char *response = getResponseFromServer(r, c, ticket);
@@ -1270,16 +1308,28 @@ static apr_byte_t isValidCASTicket(request_rec *r, cas_cfg *c, char *ticket, cha
 		 * ServiceResponse
 		 *  ->authenticationSuccess
 		 *      ->user
+                 *      ->attributes
+                 *          ->uuid
 		 *      ->proxyGrantingTicket
 		 *  ->authenticationFailure (code)
 		 */
 		node = doc->root->first_child;
 		if(apr_strnatcmp(node->name, "authenticationSuccess") == 0) {
 			node = node->first_child;
-			while(node != NULL && apr_strnatcmp(node->name, "user") != 0)
+			while(node != NULL) {                       
+				if (apr_strnatcmp(node->name, "user") == 0) {                                
+					user_node = node;                          
+				} else if (apr_strnatcmp(node->name, "attributes") == 0) {				
+					attrs_node = node->first_child;				
+					while(attrs_node != NULL) {
+						apr_table_set(attrs, attrs_node->name, attrs_node->first_cdata.first->text);
+						attrs_node = attrs_node->next;
+					}
+				}
 				node = node->next;
-			if(node != NULL) {
-				line = (char *) (node->first_cdata.first->text);
+			}
+			if(user_node != NULL) {
+				line = (char *) (user_node->first_cdata.first->text);
 				*user = apr_pstrndup(r->pool, line, strlen(line));
 				return TRUE;
 			}
@@ -1296,7 +1346,7 @@ static apr_byte_t isValidCASTicket(request_rec *r, cas_cfg *c, char *ticket, cha
 	return FALSE;
 }
 
-static apr_byte_t isValidCASCookie(request_rec *r, cas_cfg *c, char *cookie, char **user)
+static apr_byte_t isValidCASCookie(request_rec *r, cas_cfg *c, char *cookie, char **user, apr_table_t *attrs)
 {
 	char *path;
 	cas_cache_entry cache;
@@ -1353,7 +1403,8 @@ static apr_byte_t isValidCASCookie(request_rec *r, cas_cfg *c, char *cookie, cha
 	/* set the user */
 	*user = apr_pstrndup(r->pool, cache.user, strlen(cache.user));
 
-
+        /* set the user's attributes */
+        apr_table_overlap(attrs, cache.attributes, APR_OVERLAP_TABLES_SET);
 	cache.lastactive = apr_time_now();
 	if(writeCASCacheEntry(r, cookie, &cache, TRUE) == FALSE && c->CASDebug)
 		ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "Could not update cache entry for '%s'", cookie);
@@ -1590,6 +1641,22 @@ static char *getResponseFromServer (request_rec *r, cas_cfg *c, char *ticket)
 	return (apr_pstrndup(r->pool, validateResponse, strlen(validateResponse)));
 }
 
+/* apr_table_do callback, for each key sets CAS_KEY=value into the 
+   sub-process environment variables */
+static int setSubprocessEnv(void *data, const char *key, const char *value)
+{
+	request_rec *r = (request_rec *) data;
+	char *new_key;
+	int i, len;
+
+	new_key = apr_pstrdup(r->pool, key);
+	len = strlen(key);
+	for (i = 0; i <= len; i++) {
+		new_key[i] = toupper(key[i]);
+	}
+	apr_table_set(r->subprocess_env, apr_psprintf(r->pool, "CAS_%s", new_key), value);
+}
+
 /* basic CAS module logic */
 static int cas_authenticate(request_rec *r)
 {
@@ -1604,6 +1671,7 @@ static int cas_authenticate(request_rec *r)
 	apr_byte_t printPort = FALSE;
 	
 	char *newLocation = NULL;
+	apr_table_t *attrs = apr_table_make(r->pool, ATTRS_INIT_SZ);
 
 	/* Do nothing if we are not the authenticator */
 	if(apr_strnatcasecmp((const char *) ap_auth_type(r), "cas"))
@@ -1643,11 +1711,10 @@ static int cas_authenticate(request_rec *r)
 			return OK;
 		}
 	}
-
 	/* now, handle when a ticket is present (this will also catch gateway users since ticket != NULL on their trip back) */
 	if(ticket != NULL) {
-		if(isValidCASTicket(r, c, ticket, &remoteUser)) {
-			cookieString = createCASCookie(r, remoteUser, ticket);
+		if(isValidCASTicket(r, c, ticket, &remoteUser, attrs)) {            
+			cookieString = createCASCookie(r, remoteUser, attrs, ticket);
 			setCASCookie(r, (ssl ? d->CASSecureCookie : d->CASCookie), cookieString, ssl);
 			r->user = remoteUser;
 			if(d->CASAuthNHeader != NULL)
@@ -1690,10 +1757,11 @@ static int cas_authenticate(request_rec *r)
 		redirectRequest(r, c);
 		return HTTP_MOVED_TEMPORARILY;
 	} else {
-		if(isValidCASCookie(r, c, cookieString, &remoteUser)) {
+		if(isValidCASCookie(r, c, cookieString, &remoteUser, attrs)) {
 			r->user = remoteUser;
 			if(d->CASAuthNHeader != NULL)
 				apr_table_set(r->headers_in, d->CASAuthNHeader, remoteUser);
+			apr_table_do(setSubprocessEnv, r, attrs, NULL);
 			return OK;
 		} else {
 			/* maybe the cookie expired, have the user get a new service ticket */
