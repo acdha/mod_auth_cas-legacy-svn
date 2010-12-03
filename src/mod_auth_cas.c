@@ -1246,7 +1246,7 @@ static apr_byte_t isValidCASTicket(request_rec *r, cas_cfg *c, char *ticket, cha
 {
 	char *line;
 	apr_xml_doc *doc;
-	apr_xml_elem *node, *user_node = NULL, *attrs_node = NULL;
+	apr_xml_elem *node, *user_node, *attrs_node;
 	apr_xml_attr *attr;
 	apr_xml_parser *parser = apr_xml_parser_create(r->pool);
 	const char *response = getResponseFromServer(r, c, ticket);
@@ -1641,7 +1641,7 @@ static char *getResponseFromServer (request_rec *r, cas_cfg *c, char *ticket)
 	return (apr_pstrndup(r->pool, validateResponse, strlen(validateResponse)));
 }
 
-/* apr_table_do callback, for each key sets CAS_KEY=value into the 
+/* apr_table_do callback, for each key sets CAS_ATTR_{KEY}=value into the 
    sub-process environment variables */
 static int setSubprocessEnv(void *data, const char *key, const char *value)
 {
@@ -1654,7 +1654,7 @@ static int setSubprocessEnv(void *data, const char *key, const char *value)
 	for (i = 0; i <= len; i++) {
 		new_key[i] = toupper(key[i]);
 	}
-	apr_table_set(r->subprocess_env, apr_psprintf(r->pool, "CAS_%s", new_key), value);
+	apr_table_set(r->subprocess_env, apr_psprintf(r->pool, "CAS_ATTR_%s", new_key), value);
 }
 
 /* basic CAS module logic */
