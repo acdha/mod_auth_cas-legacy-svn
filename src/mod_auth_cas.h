@@ -89,6 +89,8 @@ typedef int socket_t;
 #define CAS_MAX_ERROR_SIZE 1024
 #define CAS_MAX_XML_SIZE 1024
 
+#define ATTRS_INIT_SZ 6 /* initial array size, will grow if needed */
+
 typedef struct cas_cfg {
 	unsigned int CASVersion;
 	unsigned int CASDebug;
@@ -121,6 +123,7 @@ typedef struct cas_dir_cfg {
 
 typedef struct cas_cache_entry {
 	char *user;
+        apr_table_t *attributes; 
 	apr_time_t issued;
 	apr_time_t lastactive;
 	char *path;
@@ -140,14 +143,14 @@ static const char *cfg_readCASParameter(cmd_parms *cmd, void *cfg, const char *v
 static apr_byte_t check_cert_cn(request_rec *r, cas_cfg *c, X509 *certificate, char *cn);
 static void CASCleanupSocket(socket_t s, SSL *ssl, SSL_CTX *ctx);
 static char *getResponseFromServer (request_rec *r, cas_cfg *c, char *ticket);
-static apr_byte_t isValidCASTicket(request_rec *r, cas_cfg *c, char *ticket, char **user);
+static apr_byte_t isValidCASTicket(request_rec *r, cas_cfg *c, char *ticket, char **user, apr_table_t *user_attributes);
 static apr_byte_t isSSL(request_rec *r);
 static apr_byte_t readCASCacheFile(request_rec *r, cas_cfg *c, char *name, cas_cache_entry *cache);
 static void CASCleanCache(request_rec *r, cas_cfg *c);
-static apr_byte_t isValidCASCookie(request_rec *r, cas_cfg *c, char *cookie, char **user);
+static apr_byte_t isValidCASCookie(request_rec *r, cas_cfg *c, char *cookie, char **user, apr_table_t *user_attributes);
 static char *getCASCookie(request_rec *r, char *cookieName);
 static apr_byte_t writeCASCacheEntry(request_rec *r, char *name, cas_cache_entry *cache, apr_byte_t exists);
-static char *createCASCookie(request_rec *r, char *user, char *ticket);
+static char *createCASCookie(request_rec *r, char *user, apr_table_t *user_attributes, char *ticket);
 static void expireCASST(request_rec *r, char *ticketname);
 static void CASSAMLLogout(request_rec *r, char *body);
 static apr_status_t cas_in_filter(ap_filter_t *f, apr_bucket_brigade *bb, ap_input_mode_t mode, apr_read_type_e block, apr_off_t readbytes);
